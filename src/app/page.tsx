@@ -101,9 +101,9 @@ export default function Home() {
       // リダイレクト方式を使用
       await msalInstance.loginRedirect(loginRequest);
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Login failed:', error);
-      if (error.errorCode === 'user_cancelled') {
+      if (error && typeof error === 'object' && 'errorCode' in error && error.errorCode === 'user_cancelled') {
         setError('ログインがキャンセルされました');
       } else {
         setError('Microsoftログインに失敗しました');

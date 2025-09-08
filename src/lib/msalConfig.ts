@@ -12,7 +12,7 @@ export const msalConfig: Configuration = {
   },
   system: {
     loggerOptions: {
-      loggerCallback: (level: any, message: string, containsPii: boolean) => {
+      loggerCallback: (level: number, message: string, containsPii: boolean) => {
         if (containsPii) return;
         console.log(`[MSAL] ${message}`);
       },
