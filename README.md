@@ -1,36 +1,73 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 株式会社Festal メール配信システム
 
-## Getting Started
+Microsoft Graph APIを使用したメール配信Webアプリケーション
 
-First, run the development server:
+## 🌟 特徴
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **完全無料**: Vercelで永続的に無料運用
+- **環境構築不要**: ブラウザからアクセス
+- **美しいUI**: モダンなレスポンシブデザイン
+- **Excel/CSV対応**: 柔軟なカラム名対応
+- **リアルタイム進捗**: 送信状況をリアルタイム表示
+
+## 🚀 デプロイ方法
+
+### 1. Vercelアカウント作成
+1. [Vercel](https://vercel.com) にアクセス
+2. GitHubアカウントでログイン（無料・クレジットカード不要）
+
+### 2. GitHubリポジトリをVercelにデプロイ
+1. Vercelダッシュボードで「New Project」
+2. このリポジトリを選択
+3. 「Deploy」をクリック
+
+### 3. 環境変数設定
+Vercelプロジェクト設定で以下を追加：
+
+```
+AZURE_CLIENT_ID=your-azure-client-id
+AZURE_CLIENT_SECRET=your-azure-client-secret
+AZURE_TENANT_ID=your-azure-tenant-id
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 📋 使用方法
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. デプロイされたURLにアクセス
+2. 送信者メールアドレス入力（@festal-inc.com）
+3. Excel/CSVファイルをアップロード
+4. プレビュー確認後、送信開始
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 📊 必要なファイル形式
 
-## Learn More
+### Excel/CSVファイルの必須カラム
+- **宛先**: `宛先`, `email`, `メール`, `mail` 等
+- **件名**: `件名`, `subject`, `タイトル` 等  
+- **本文**: `本文`, `body`, `content`, `内容` 等
 
-To learn more about Next.js, take a look at the following resources:
+## 🔧 開発環境
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+# 依存関係インストール
+npm install
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# 開発サーバー起動
+npm run dev
 
-## Deploy on Vercel
+# ビルド
+npm run build
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 📝 技術スタック
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **フロントエンド**: Next.js 14, React, TypeScript, Tailwind CSS
+- **バックエンド**: Next.js API Routes, Microsoft Graph API
+- **認証**: Azure AD (MSAL)
+- **デプロイ**: Vercel (無料)
+
+## 🎯 完全無料運用
+
+- **Vercel**: 永続的に無料
+- **GitHub**: 無料リポジトリ
+- **Microsoft Graph API**: 既存のMicrosoft 365ライセンス使用
+
+**総コスト: 0円** 🎉
