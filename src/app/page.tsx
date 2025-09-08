@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Upload, Mail, FileText, Send, CheckCircle, AlertCircle } from 'lucide-react';
+import { PublicClientApplication, AccountInfo } from '@azure/msal-browser';
+import { msalConfig, loginRequest } from '@/lib/msalConfig';
 
 interface EmailData {
   email: string;
@@ -24,8 +26,50 @@ export default function Home() {
   const [emailData, setEmailData] = useState<EmailData[]>([]);
   const [preview, setPreview] = useState<EmailData[]>([]);
   const [results, setResults] = useState<SendResult[]>([]);
-  const [currentStep, setCurrentStep] = useState<'upload' | 'preview' | 'sending' | 'results'>('upload');
+  const [currentStep, setCurrentStep] = useState<'auth' | 'upload' | 'preview' | 'sending' | 'results'>('auth');
+  const [authenticatedUser, setAuthenticatedUser] = useState<AccountInfo | null>(null);
+  const [msalInstance, setMsalInstance] = useState<PublicClientApplication | null>(null);
   const [error, setError] = useState('');
+
+  // MSAL初期化
+  useEffect(() => {
+    const initializeMsal = async () => {
+      const instance = new PublicClientApplication(msalConfig);
+      await instance.initialize();
+      setMsalInstance(instance);
+      
+      // リダイレクト後の処理
+      try {
+        const response = await instance.handleRedirectPromise();
+        if (response && response.account) {
+          const account = response.account;
+          if (account.username.includes('@festal-inc.com')) {
+            setAuthenticatedUser(account);
+            setSenderEmail(account.username);
+            setCurrentStep('upload');
+          } else {
+            setError('Festalのメールアドレスでログインしてください');
+            await instance.logoutRedirect();
+          }
+        }
+      } catch (error) {
+        console.error('Redirect handling failed:', error);
+      }
+      
+      // 既存のアカウントをチェック
+      const accounts = instance.getAllAccounts();
+      if (accounts.length > 0) {
+        const account = accounts[0];
+        if (account.username.includes('@festal-inc.com')) {
+          setAuthenticatedUser(account);
+          setSenderEmail(account.username);
+          setCurrentStep('upload');
+        }
+      }
+    };
+    
+    initializeMsal();
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -41,6 +85,44 @@ export default function Home() {
     if (droppedFile) {
       setFile(droppedFile);
       setError('');
+    }
+  };
+
+  const handleAuth = async () => {
+    if (!msalInstance) {
+      setError('認証システムの初期化中です。しばらくお待ちください。');
+      return;
+    }
+
+    setIsUploading(true);
+    setError('');
+
+    try {
+      // リダイレクト方式を使用
+      await msalInstance.loginRedirect(loginRequest);
+      
+    } catch (error: any) {
+      console.error('Login failed:', error);
+      if (error.errorCode === 'user_cancelled') {
+        setError('ログインがキャンセルされました');
+      } else {
+        setError('Microsoftログインに失敗しました');
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!msalInstance) return;
+    
+    try {
+      await msalInstance.logoutPopup();
+      setAuthenticatedUser(null);
+      setSenderEmail('');
+      setCurrentStep('auth');
+    } catch (error) {
+      console.error('Logout failed:', error);
     }
   };
 
@@ -169,11 +251,83 @@ export default function Home() {
 
           {/* メインコンテンツ */}
           <div className="bg-white rounded-2xl shadow-xl p-8">
-            {currentStep === 'upload' && (
+            {currentStep === 'auth' && (
               <div className="space-y-6">
                 <h2 className="text-2xl font-semibold text-gray-800 mb-6">
-                  ファイルアップロード
+                  🔐 Microsoft認証
                 </h2>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-center">
+                    <div className="text-blue-600 mr-3">
+                      <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-blue-800 font-medium">セキュリティ認証</p>
+                      <p className="text-blue-700 text-sm">Microsoftアカウントで安全にログインします</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <div className="flex items-center">
+                    <div className="text-yellow-600 mr-3">
+                      <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-yellow-800 font-medium">重要</p>
+                      <p className="text-yellow-700 text-sm">Festalのメールアドレス(@festal-inc.com)でのみログイン可能です</p>
+                    </div>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-800">{error}</p>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleAuth}
+                  disabled={!msalInstance || isUploading}
+                  className="w-full py-4 px-6 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+                >
+                  {isUploading ? (
+                    <div className="flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                      Microsoftログイン中...
+                    </div>
+                  ) : (
+                    <>
+                      🔐 Microsoftでログイン
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {currentStep === 'upload' && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-semibold text-gray-800">
+                    ファイルアップロード
+                  </h2>
+                  <div className="flex items-center space-x-4">
+                    <div className="text-sm text-gray-600">
+                      ログイン中: <strong>{authenticatedUser?.name}</strong> ({authenticatedUser?.username})
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="text-red-600 hover:text-red-800 text-sm underline"
+                    >
+                      ログアウト
+                    </button>
+                  </div>
+                </div>
 
                 {/* 送信者メールアドレス */}
                 <div>
@@ -321,7 +475,7 @@ export default function Home() {
                       </tbody>
                     </table>
                   </div>
-                </div>
+        </div>
 
                 <div className="flex space-x-4">
                   <button
