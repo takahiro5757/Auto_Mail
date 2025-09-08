@@ -31,14 +31,14 @@ export async function POST(request: NextRequest) {
         // CSV処理
         const text = new TextDecoder().decode(arrayBuffer);
         const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
-        data = parseEmailData(parsed.data as any[]);
+        data = parseEmailData(parsed.data as Record<string, unknown>[]);
       } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
         // Excel処理
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
-        data = parseEmailData(jsonData as any[]);
+        data = parseEmailData(jsonData as Record<string, unknown>[]);
       } else {
         return NextResponse.json({ success: false, error: 'サポートされていないファイル形式です' }, { status: 400 });
       }
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function parseEmailData(rawData: any[]): EmailData[] {
+function parseEmailData(rawData: Record<string, unknown>[]): EmailData[] {
   const emailData: EmailData[] = [];
 
   for (const row of rawData) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Upload, Mail, Clock, FileText, Send, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, Mail, FileText, Send, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface EmailData {
   email: string;
@@ -21,7 +21,6 @@ export default function Home() {
   const [delay, setDelay] = useState(5);
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [isSending, setIsSending] = useState(false);
   const [emailData, setEmailData] = useState<EmailData[]>([]);
   const [preview, setPreview] = useState<EmailData[]>([]);
   const [results, setResults] = useState<SendResult[]>([]);
@@ -78,7 +77,7 @@ export default function Home() {
       } else {
         setError(result.error);
       }
-    } catch (err) {
+    } catch {
       setError('ファイルのアップロードに失敗しました');
     } finally {
       setIsUploading(false);
@@ -88,7 +87,6 @@ export default function Home() {
   const handleSend = async () => {
     if (!emailData.length) return;
 
-    setIsSending(true);
     setCurrentStep('sending');
     const sendResults: SendResult[] = [];
 
@@ -125,7 +123,7 @@ export default function Home() {
           if (i < emailData.length - 1) {
             await new Promise(resolve => setTimeout(resolve, delay * 1000));
           }
-        } catch (err) {
+        } catch {
           sendResults.push({
             index: i + 1,
             email: email.email,
@@ -137,10 +135,8 @@ export default function Home() {
       }
 
       setCurrentStep('results');
-    } catch (err) {
+    } catch {
       setError('メール送信中にエラーが発生しました');
-    } finally {
-      setIsSending(false);
     }
   };
 
