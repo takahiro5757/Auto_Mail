@@ -1,10 +1,26 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Upload, Mail, FileText, Send, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, Mail, FileText, Send, CheckCircle, AlertCircle, Edit3, Eye } from 'lucide-react';
+import { replaceTemplateVariables, extractTemplateVariables, createTemplateVariables, previewTemplate } from '@/lib/templateEngine';
 import { PublicClientApplication, AccountInfo } from '@azure/msal-browser';
 import { msalConfig, loginRequest } from '@/lib/msalConfig';
 
+// Phase 2: 宛先リストとテンプレートを分離
+interface ContactData {
+  email: string;
+  name: string;
+  company?: string;
+  department?: string;
+  position?: string;
+}
+
+interface EmailTemplate {
+  subject: string;
+  body: string;
+}
+
+// Phase 1との互換性のため残す
 interface EmailData {
   email: string;
   subject: string;
@@ -26,10 +42,17 @@ export default function Home() {
   const [emailData, setEmailData] = useState<EmailData[]>([]);
   const [preview, setPreview] = useState<EmailData[]>([]);
   const [results, setResults] = useState<SendResult[]>([]);
-  const [currentStep, setCurrentStep] = useState<'auth' | 'upload' | 'preview' | 'sending' | 'results'>('auth');
+  const [currentStep, setCurrentStep] = useState<'auth' | 'upload' | 'template' | 'preview' | 'sending' | 'results'>('auth');
   const [authenticatedUser, setAuthenticatedUser] = useState<AccountInfo | null>(null);
   const [msalInstance, setMsalInstance] = useState<PublicClientApplication | null>(null);
   const [error, setError] = useState('');
+
+  // Phase 2: 新しいステート
+  const [contacts, setContacts] = useState<ContactData[]>([]);
+  const [emailTemplate, setEmailTemplate] = useState<EmailTemplate>({
+    subject: '',
+    body: ''
+  });
 
   // MSAL初期化
   useEffect(() => {
@@ -153,9 +176,16 @@ export default function Home() {
       const result = await response.json();
 
       if (result.success) {
-        setEmailData(result.data);
-        setPreview(result.data.slice(0, 3));
-        setCurrentStep('preview');
+        // Phase 2: 宛先リストかメールデータかを判定
+        if (result.type === 'contacts') {
+          setContacts(result.data);
+          setCurrentStep('template');
+        } else {
+          // Phase 1との互換性
+          setEmailData(result.data);
+          setPreview(result.data.slice(0, 3));
+          setCurrentStep('preview');
+        }
       } else {
         setError(result.error);
       }
@@ -428,6 +458,159 @@ export default function Home() {
                     </>
                   )}
                 </button>
+              </div>
+            )}
+
+            {currentStep === 'template' && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-semibold text-gray-800">
+                    📝 メールテンプレート作成
+                  </h2>
+                  <div className="text-sm text-gray-600">
+                    宛先: <strong>{contacts.length}件</strong>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-center">
+                    <div className="text-blue-600 mr-3">
+                      <Edit3 className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-blue-800 font-medium">テンプレート機能</p>
+                      <p className="text-blue-700 text-sm">
+                        変数を使って個別化されたメールを作成できます: {'{name}'}, {'{company}'}, {'{sender}'} など
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* テンプレート作成 */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-medium text-gray-700">テンプレート作成</h3>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        件名
+                      </label>
+                      <input
+                        type="text"
+                        value={emailTemplate.subject}
+                        onChange={(e) => setEmailTemplate({...emailTemplate, subject: e.target.value})}
+                        placeholder="例: 【{'{company}'}】セミナーのご案内"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        本文
+                      </label>
+                      <textarea
+                        value={emailTemplate.body}
+                        onChange={(e) => setEmailTemplate({...emailTemplate, body: e.target.value})}
+                        placeholder={`例:
+{'{name}'}様
+
+いつもお世話になっております。
+{'{sender}'}です。
+
+来月のセミナーについてご案内いたします...`}
+                        rows={12}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">利用可能な変数:</h4>
+                      <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
+                        <div>• {'{name}'} - 氏名</div>
+                        <div>• {'{company}'} - 会社名</div>
+                        <div>• {'{department}'} - 部署</div>
+                        <div>• {'{position}'} - 役職</div>
+                        <div>• {'{sender}'} - 送信者名</div>
+                        <div>• {'{today}'} - 今日の日付</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* プレビュー */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-medium text-gray-700">プレビュー</h3>
+                    
+                    <div className="border border-gray-300 rounded-lg overflow-hidden">
+                      <div className="bg-gray-50 px-4 py-2 border-b border-gray-300">
+                        <div className="text-sm text-gray-600">件名:</div>
+                        <div className="font-medium">
+                          {emailTemplate.subject ? previewTemplate(emailTemplate.subject) : '件名を入力してください'}
+                        </div>
+                      </div>
+                      <div className="p-4">
+                        <div className="text-sm text-gray-600 mb-2">本文:</div>
+                        <div className="whitespace-pre-wrap text-sm">
+                          {emailTemplate.body ? previewTemplate(emailTemplate.body) : '本文を入力してください'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <div className="text-yellow-600 mr-3">
+                          <Eye className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-yellow-800 font-medium">プレビュー説明</p>
+                          <p className="text-yellow-700 text-sm">
+                            実際の送信時は各宛先の情報で変数が置換されます
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-800">{error}</p>
+                  </div>
+                )}
+
+                <div className="flex justify-between">
+                  <button
+                    onClick={() => setCurrentStep('upload')}
+                    className="px-6 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                  >
+                    ← 戻る
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!emailTemplate.subject || !emailTemplate.body) {
+                        setError('件名と本文を入力してください');
+                        return;
+                      }
+                      
+                      // テンプレートから実際のメールデータを生成
+                      const generatedEmails = contacts.map(contact => {
+                        const variables = createTemplateVariables(contact, authenticatedUser?.name);
+                        return {
+                          email: contact.email,
+                          subject: replaceTemplateVariables(emailTemplate.subject, variables),
+                          body: replaceTemplateVariables(emailTemplate.body, variables)
+                        };
+                      });
+                      
+                      setEmailData(generatedEmails);
+                      setPreview(generatedEmails.slice(0, 3));
+                      setCurrentStep('preview');
+                    }}
+                    disabled={!emailTemplate.subject || !emailTemplate.body}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                  >
+                    プレビューを確認 →
+                  </button>
+                </div>
               </div>
             )}
 
