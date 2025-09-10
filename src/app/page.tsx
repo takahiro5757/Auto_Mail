@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Upload, Mail, FileText, Send, CheckCircle, AlertCircle, Edit3, Eye } from 'lucide-react';
-import { replaceTemplateVariables, extractTemplateVariables, createTemplateVariables, previewTemplate } from '@/lib/templateEngine';
+import { Upload, Mail, FileText, Send, CheckCircle, AlertCircle, Edit3, Eye, Shield, User, Users, Clock, LogOut } from 'lucide-react';
+import { replaceTemplateVariables, createTemplateVariables, previewTemplate } from '@/lib/templateEngine';
 import { PublicClientApplication, AccountInfo } from '@azure/msal-browser';
 import { msalConfig, loginRequest } from '@/lib/msalConfig';
 
@@ -150,13 +150,13 @@ export default function Home() {
   };
 
   const handleUpload = async () => {
-    if (!file || !senderEmail) {
-      setError('ファイルと送信者メールアドレスを入力してください');
+    if (!file) {
+      setError('ファイルを選択してください');
       return;
     }
 
-    if (!senderEmail.includes('@festal-inc.com')) {
-      setError('Festalのメールアドレスを入力してください');
+    if (!senderEmail || !authenticatedUser) {
+      setError('認証が必要です。再度ログインしてください。');
       return;
     }
 
@@ -176,16 +176,9 @@ export default function Home() {
       const result = await response.json();
 
       if (result.success) {
-        // Phase 2: 宛先リストかメールデータかを判定
-        if (result.type === 'contacts') {
-          setContacts(result.data);
-          setCurrentStep('template');
-        } else {
-          // Phase 1との互換性
-          setEmailData(result.data);
-          setPreview(result.data.slice(0, 3));
-          setCurrentStep('preview');
-        }
+        // 宛先リストをセットしてテンプレート作成画面へ
+        setContacts(result.data);
+        setCurrentStep('template');
       } else {
         setError(result.error);
       }
@@ -217,6 +210,7 @@ export default function Home() {
               recipientEmail: email.email,
               subject: email.subject,
               body: email.body,
+              authenticatedUserEmail: authenticatedUser?.username || senderEmail,
             }),
           });
 
@@ -283,9 +277,12 @@ export default function Home() {
           <div className="bg-white rounded-2xl shadow-xl p-8">
             {currentStep === 'auth' && (
               <div className="space-y-6">
-                <h2 className="text-2xl font-semibold text-gray-800 mb-6">
-                  🔐 Microsoft認証
-                </h2>
+                <div className="flex items-center mb-6">
+                  <Shield className="h-7 w-7 text-blue-600 mr-3" />
+                  <h2 className="text-2xl font-semibold text-gray-800">
+                    Microsoft認証
+                  </h2>
+                </div>
 
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="flex items-center">
@@ -332,9 +329,10 @@ export default function Home() {
                       Microsoftログイン中...
                     </div>
                   ) : (
-                    <>
-                      🔐 Microsoftでログイン
-                    </>
+                    <div className="flex items-center justify-center">
+                      <Shield className="h-5 w-5 mr-2" />
+                      Microsoftでログイン
+                    </div>
                   )}
                 </button>
               </div>
@@ -347,37 +345,46 @@ export default function Home() {
                     ファイルアップロード
                   </h2>
                   <div className="flex items-center space-x-4">
-                    <div className="text-sm text-gray-600">
-                      ログイン中: <strong>{authenticatedUser?.name}</strong> ({authenticatedUser?.username})
+                    <div className="flex items-center text-sm text-gray-600">
+                      <User className="h-4 w-4 mr-1" />
+                      <strong>{authenticatedUser?.name}</strong> ({authenticatedUser?.username})
                     </div>
                     <button
                       onClick={handleLogout}
-                      className="text-red-600 hover:text-red-800 text-sm underline"
+                      className="flex items-center text-red-600 hover:text-red-800 text-sm"
                     >
+                      <LogOut className="h-4 w-4 mr-1" />
                       ログアウト
                     </button>
                   </div>
                 </div>
 
-                {/* 送信者メールアドレス */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    送信者メールアドレス
-                  </label>
-                  <input
-                    type="email"
-                    value={senderEmail}
-                    onChange={(e) => setSenderEmail(e.target.value)}
-                    placeholder="your.name@festal-inc.com"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
+                {/* 送信者情報（表示のみ） */}
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center">
+                    <div className="text-green-600 mr-3">
+                      <CheckCircle className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-green-800 font-medium">送信者アカウント</p>
+                      <p className="text-green-700 text-sm">
+                        <strong>{authenticatedUser?.name}</strong> ({senderEmail})
+                      </p>
+                      <p className="text-green-600 text-xs mt-1">
+                        認証済みアカウントから送信されます
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* 送信間隔 */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    送信間隔
-                  </label>
+                  <div className="flex items-center mb-2">
+                    <Clock className="h-4 w-4 text-gray-600 mr-2" />
+                    <label className="text-sm font-medium text-gray-700">
+                      送信間隔
+                    </label>
+                  </div>
                   <select
                     value={delay}
                     onChange={(e) => setDelay(Number(e.target.value))}
@@ -419,10 +426,31 @@ export default function Home() {
                       <FileText className="h-5 w-5 mr-2" />
                       ファイルを選択
                     </label>
-                    <p className="text-sm text-gray-500 mt-4">
-                      対応形式: Excel (.xlsx, .xls), CSV (.csv)<br />
-                      必須カラム: 宛先/email, 件名/subject, 本文/body
-                    </p>
+                    <div className="text-sm text-gray-500 mt-6 text-left">
+                      <div className="flex items-center justify-start mb-3">
+                        <FileText className="h-4 w-4 mr-2" />
+                        <strong>対応形式:</strong> Excel (.xlsx, .xls), CSV (.csv)
+                      </div>
+                      <div className="flex items-center justify-start mb-2">
+                        <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+                        <strong>必須カラム:</strong>
+                      </div>
+                      <div className="ml-6 mb-3 text-gray-600">
+                        • email, name
+                      </div>
+                      <div className="flex items-center justify-start mb-2">
+                        <Users className="h-4 w-4 mr-2 text-blue-600" />
+                        <strong>オプションカラム:</strong>
+                      </div>
+                      <div className="ml-6 mb-4 text-gray-600">
+                        • company, department, position
+                      </div>
+                      <div className="text-xs text-gray-400 bg-gray-50 p-3 rounded-md">
+                        <div className="mb-1">※ Excel: 「宛先リスト」シートを優先読込</div>
+                        <div className="mb-1">※ CSV: 任意のファイル名でアップロード可能</div>
+                        <div>※ テンプレート作成画面で件名・本文を作成</div>
+                      </div>
+                    </div>
                   </div>
                   
                   {file && (
@@ -443,7 +471,7 @@ export default function Home() {
 
                 <button
                   onClick={handleUpload}
-                  disabled={!file || !senderEmail || isUploading}
+                  disabled={!file || !authenticatedUser || isUploading}
                   className="w-full py-4 px-6 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
                 >
                   {isUploading ? (
@@ -464,10 +492,14 @@ export default function Home() {
             {currentStep === 'template' && (
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-semibold text-gray-800">
-                    📝 メールテンプレート作成
-                  </h2>
-                  <div className="text-sm text-gray-600">
+                  <div className="flex items-center">
+                    <Edit3 className="h-7 w-7 text-blue-600 mr-3" />
+                    <h2 className="text-2xl font-semibold text-gray-800">
+                      メールテンプレート作成
+                    </h2>
+                  </div>
+                  <div className="flex items-center text-sm text-gray-600">
+                    <Mail className="h-4 w-4 mr-1" />
                     宛先: <strong>{contacts.length}件</strong>
                   </div>
                 </div>
@@ -527,11 +559,10 @@ export default function Home() {
                       <h4 className="text-sm font-medium text-gray-700 mb-2">利用可能な変数:</h4>
                       <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
                         <div>• {'{name}'} - 氏名</div>
+                        <div>• {'{email}'} - メールアドレス</div>
                         <div>• {'{company}'} - 会社名</div>
                         <div>• {'{department}'} - 部署</div>
                         <div>• {'{position}'} - 役職</div>
-                        <div>• {'{sender}'} - 送信者名</div>
-                        <div>• {'{today}'} - 今日の日付</div>
                       </div>
                     </div>
                   </div>
@@ -593,7 +624,7 @@ export default function Home() {
                       
                       // テンプレートから実際のメールデータを生成
                       const generatedEmails = contacts.map(contact => {
-                        const variables = createTemplateVariables(contact, authenticatedUser?.name);
+                        const variables = createTemplateVariables(contact);
                         return {
                           email: contact.email,
                           subject: replaceTemplateVariables(emailTemplate.subject, variables),

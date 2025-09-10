@@ -79,14 +79,22 @@ async function sendEmailViaGraph(
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { senderEmail, recipientEmail, subject, body: emailBody } = body;
+    const { senderEmail, recipientEmail, subject, body: emailBody, authenticatedUserEmail } = body;
 
     // 入力検証
-    if (!senderEmail || !recipientEmail || !subject || !emailBody) {
+    if (!senderEmail || !recipientEmail || !subject || !emailBody || !authenticatedUserEmail) {
       return NextResponse.json({ 
         success: false, 
         message: '必須項目が不足しています' 
       }, { status: 400 });
+    }
+
+    // セキュリティ検証: 送信者は認証済みユーザーと同一である必要がある
+    if (senderEmail !== authenticatedUserEmail) {
+      return NextResponse.json({ 
+        success: false, 
+        message: '認証済みアカウント以外からの送信は許可されていません' 
+      }, { status: 403 });
     }
 
     if (!senderEmail.includes('@festal-inc.com')) {

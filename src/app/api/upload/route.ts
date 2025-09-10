@@ -11,29 +11,21 @@ interface ContactData {
   position?: string;
 }
 
-// Phase 1: メールデータ用（互換性のため残す）
-interface EmailData {
-  email: string;
-  subject: string;
-  body: string;
-}
 
 /**
- * ファイルの形式を判定（宛先リスト vs メールデータ）
+ * 宛先リスト形式かどうかを判定
  */
-function detectFileType(rawData: Record<string, unknown>[]): boolean {
+function isContactListFormat(rawData: Record<string, unknown>[]): boolean {
   if (rawData.length === 0) return false;
   
   const firstRow = rawData[0];
   const keys = Object.keys(firstRow).map(k => k.toLowerCase());
   
-  // 宛先リスト形式の判定: email + name があり、subject/body がない
+  // 必須項目: email + name
   const hasEmail = keys.some(k => k.includes('email') || k.includes('メール'));
   const hasName = keys.some(k => k.includes('name') || k.includes('氏名') || k.includes('名前'));
-  const hasSubject = keys.some(k => k.includes('subject') || k.includes('件名'));
-  const hasBody = keys.some(k => k.includes('body') || k.includes('本文') || k.includes('内容'));
   
-  return hasEmail && hasName && !hasSubject && !hasBody;
+  return hasEmail && hasName;
 }
 
 /**
@@ -78,41 +70,6 @@ function parseContactData(rawData: Record<string, unknown>[]): ContactData[] {
   return contacts;
 }
 
-/**
- * Phase 1形式のメールデータをパース（互換性のため）
- */
-function parseEmailData(rawData: Record<string, unknown>[]): EmailData[] {
-  const emailData: EmailData[] = [];
-
-  for (const row of rawData) {
-    const normalizedRow: Record<string, string> = {};
-    
-    // カラム名を正規化
-    Object.entries(row).forEach(([key, value]) => {
-      const normalizedKey = key.toLowerCase().trim();
-      const strValue = String(value || '').trim();
-      
-      if (normalizedKey.includes('email') || normalizedKey.includes('メール')) {
-        normalizedRow.email = strValue;
-      } else if (normalizedKey.includes('subject') || normalizedKey.includes('件名')) {
-        normalizedRow.subject = strValue;
-      } else if (normalizedKey.includes('body') || normalizedKey.includes('本文') || normalizedKey.includes('内容')) {
-        normalizedRow.body = strValue;
-      }
-    });
-
-    // 必須項目チェック
-    if (normalizedRow.email && normalizedRow.subject && normalizedRow.body) {
-      emailData.push({
-        email: normalizedRow.email,
-        subject: normalizedRow.subject,
-        body: normalizedRow.body,
-      });
-    }
-  }
-  
-  return emailData;
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -141,7 +98,18 @@ export async function POST(request: NextRequest) {
       } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
         // Excel処理
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
+        
+        // 宛先リスト用のシートを探す（優先順位順）
+        const targetSheets = ['宛先リスト', 'contacts', 'データ', 'data'];
+        let sheetName = workbook.SheetNames[0]; // デフォルトは最初のシート
+        
+        for (const targetSheet of targetSheets) {
+          if (workbook.SheetNames.includes(targetSheet)) {
+            sheetName = targetSheet;
+            break;
+          }
+        }
+        
         const worksheet = workbook.Sheets[sheetName];
         rawData = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
       } else {
@@ -152,36 +120,28 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'ファイルにデータが含まれていません' }, { status: 400 });
       }
 
-      // Phase 2: ファイル形式を判定（宛先リスト vs メールデータ）
-      const isContactList = detectFileType(rawData);
-      
-      if (isContactList) {
-        // 宛先リスト形式
-        const contacts = parseContactData(rawData);
-        if (contacts.length === 0) {
-          return NextResponse.json({ success: false, error: '有効な宛先データが見つかりませんでした。email と name カラムが必要です。' }, { status: 400 });
-        }
-        
+      // 宛先リスト形式の検証とパース
+      if (!isContactListFormat(rawData)) {
         return NextResponse.json({ 
-          success: true, 
-          type: 'contacts',
-          data: contacts,
-          count: contacts.length 
-        });
-      } else {
-        // Phase 1形式（互換性のため）
-        const emailData = parseEmailData(rawData);
-        if (emailData.length === 0) {
-          return NextResponse.json({ success: false, error: '有効なメールデータが見つかりませんでした。email、subject、body カラムが必要です。' }, { status: 400 });
-        }
-        
-        return NextResponse.json({ 
-          success: true, 
-          type: 'emails',
-          data: emailData,
-          count: emailData.length 
-        });
+          success: false, 
+          error: '有効なファイル形式ではありません。email と name カラムが必要です。' 
+        }, { status: 400 });
       }
+
+      const contacts = parseContactData(rawData);
+      if (contacts.length === 0) {
+        return NextResponse.json({ 
+          success: false, 
+          error: '有効な宛先データが見つかりませんでした。email と name カラムが必要です。' 
+        }, { status: 400 });
+      }
+      
+      return NextResponse.json({ 
+        success: true, 
+        type: 'contacts',
+        data: contacts,
+        count: contacts.length 
+      });
 
     } catch (parseError) {
       console.error('File parsing error:', parseError);
