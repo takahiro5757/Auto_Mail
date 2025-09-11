@@ -1,10 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Upload, Mail, FileText, Send, CheckCircle, AlertCircle, Edit3, Eye, Shield, User, Users, Clock, LogOut } from 'lucide-react';
+import { Upload, Mail, FileText, Send, CheckCircle, AlertCircle, Edit3, Eye, Shield, User, Users, Clock, LogOut, Zap, ArrowLeft, MessageSquare, Copy } from 'lucide-react';
 import { replaceTemplateVariables, createTemplateVariables, previewTemplate } from '@/lib/templateEngine';
 import { PublicClientApplication, AccountInfo } from '@azure/msal-browser';
-import { msalConfig, loginRequest } from '@/lib/msalConfig';
 
 // Phase 2: 宛先リストとテンプレートを分離
 interface ContactData {
@@ -46,6 +45,12 @@ export default function Home() {
   const [authenticatedUser, setAuthenticatedUser] = useState<AccountInfo | null>(null);
   const [msalInstance, setMsalInstance] = useState<PublicClientApplication | null>(null);
   const [error, setError] = useState('');
+  
+  // AI Chat 関連の状態
+  const [showAIChat, setShowAIChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{role: 'user' | 'assistant', content: string}>>([]);
+  const [currentMessage, setCurrentMessage] = useState('');
+  const [isAILoading, setIsAILoading] = useState(false);
 
   // Phase 2: 新しいステート
   const [contacts, setContacts] = useState<ContactData[]>([]);
@@ -54,44 +59,54 @@ export default function Home() {
     body: ''
   });
 
-  // MSAL初期化
+  // MSAL初期化（クライアントサイドのみ）
   useEffect(() => {
-    const initializeMsal = async () => {
-      const instance = new PublicClientApplication(msalConfig);
-      await instance.initialize();
-      setMsalInstance(instance);
-      
-      // リダイレクト後の処理
-      try {
-        const response = await instance.handleRedirectPromise();
-        if (response && response.account) {
-          const account = response.account;
-          if (account.username.includes('@festal-inc.com')) {
-            setAuthenticatedUser(account);
-            setSenderEmail(account.username);
-            setCurrentStep('upload');
-          } else {
-            setError('Festalのメールアドレスでログインしてください');
-            await instance.logoutRedirect();
+    // SSR環境ではcryptoオブジェクトが利用できないため、クライアントサイドでのみ実行
+    if (typeof window !== 'undefined') {
+      const initializeMsal = async () => {
+        try {
+          // 動的インポートでMSAL設定を読み込み
+          const { msalConfig } = await import('@/lib/msalConfig');
+          const instance = new PublicClientApplication(msalConfig);
+          await instance.initialize();
+          setMsalInstance(instance);
+          
+          // リダイレクト後の処理
+          try {
+            const response = await instance.handleRedirectPromise();
+            if (response && response.account) {
+              const account = response.account;
+              if (account.username.includes('@festal-inc.com')) {
+                setAuthenticatedUser(account);
+                setSenderEmail(account.username);
+                setCurrentStep('upload');
+              } else {
+                setError('Festalのメールアドレスでログインしてください');
+                await instance.logoutRedirect();
+              }
+            }
+          } catch (error) {
+            console.error('Redirect handling failed:', error);
           }
+          
+          // 既存のアカウントをチェック
+          const accounts = instance.getAllAccounts();
+          if (accounts.length > 0) {
+            const account = accounts[0];
+            if (account.username.includes('@festal-inc.com')) {
+              setAuthenticatedUser(account);
+              setSenderEmail(account.username);
+              setCurrentStep('upload');
+            }
+          }
+        } catch (error) {
+          console.error('MSAL initialization failed:', error);
+          setError('認証システムの初期化に失敗しました。ページを再読み込みしてください。');
         }
-      } catch (error) {
-        console.error('Redirect handling failed:', error);
-      }
+      };
       
-      // 既存のアカウントをチェック
-      const accounts = instance.getAllAccounts();
-      if (accounts.length > 0) {
-        const account = accounts[0];
-        if (account.username.includes('@festal-inc.com')) {
-          setAuthenticatedUser(account);
-          setSenderEmail(account.username);
-          setCurrentStep('upload');
-        }
-      }
-    };
-    
-    initializeMsal();
+      initializeMsal();
+    }
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -121,6 +136,8 @@ export default function Home() {
     setError('');
 
     try {
+      // 動的インポートでログイン設定を読み込み
+      const { loginRequest } = await import('@/lib/msalConfig');
       // リダイレクト方式を使用
       await msalInstance.loginRedirect(loginRequest);
       
@@ -254,6 +271,89 @@ export default function Home() {
     setCurrentStep('upload');
     setError('');
     setSenderEmail('');
+    setShowAIChat(false);
+    setChatMessages([]);
+    setCurrentMessage('');
+    setIsAILoading(false);
+  };
+
+  // AI Chat 関数
+  const sendChatMessage = async () => {
+    if (!currentMessage.trim()) return;
+
+    const newUserMessage = { role: 'user' as const, content: currentMessage };
+    const updatedMessages = [...chatMessages, newUserMessage];
+    setChatMessages(updatedMessages);
+    setCurrentMessage('');
+    setIsAILoading(true);
+
+    try {
+      const availableVars = contacts.length > 0 
+        ? Object.keys(contacts[0]).filter(key => key !== 'email' && key !== 'name')
+        : ['name', 'email', 'company', 'department', 'position'];
+
+      // 実際のデータサンプルを取得
+      const sampleData = contacts.length > 0 ? contacts.slice(0, 3) : [];
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: updatedMessages,
+          availableVariables: ['name', 'email', ...availableVars],
+          sampleData: sampleData,
+          totalRecipients: contacts.length
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        const assistantMessage = { role: 'assistant' as const, content: data.response };
+        setChatMessages([...updatedMessages, assistantMessage]);
+        
+        // メール形式を検出して自動入力
+        const emailMatch = data.response.match(/件名:\s*(.+?)(?:\n|$)/);
+        const bodyMatch = data.response.match(/本文:\s*([\s\S]*?)(?:\n\n|$)/);
+        
+        if (emailMatch && bodyMatch) {
+          setEmailTemplate({
+            subject: emailMatch[1].trim(),
+            body: bodyMatch[1].trim()
+          });
+        }
+      } else {
+        const errorMessage = data.error || 'エラーが発生しました。もう一度お試しください。';
+        setChatMessages([...updatedMessages, { 
+          role: 'assistant', 
+          content: `❌ ${errorMessage}${data.details ? `\n詳細: ${data.details}` : ''}` 
+        }]);
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+      setChatMessages([...updatedMessages, { 
+        role: 'assistant', 
+        content: 'エラーが発生しました。もう一度お試しください。' 
+      }]);
+    }
+
+    setIsAILoading(false);
+  };
+
+  const startAIChat = () => {
+    setShowAIChat(true);
+    if (chatMessages.length === 0) {
+      setChatMessages([{
+        role: 'assistant',
+        content: 'こんにちは！メール作成をお手伝いします。\n\nどのような目的のメールを作成しますか？\n例：\n- セミナーの案内\n- 新商品の紹介\n- 会議の招待\n- お礼のメール\n\n目的を教えてください！'
+      }]);
+    }
   };
 
   return (
@@ -512,89 +612,232 @@ export default function Home() {
                     <div>
                       <p className="text-blue-800 font-medium">テンプレート機能</p>
                       <p className="text-blue-700 text-sm">
-                        変数を使って個別化されたメールを作成できます: {'{name}'}, {'{company}'}, {'{sender}'} など
+                        変数を使って個別化されたメールを作成できます: {'{name}'}, {'{company}'}, {'{department}'} など
                       </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* テンプレート作成 */}
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-medium text-gray-700">テンプレート作成</h3>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        件名
-                      </label>
-                      <input
-                        type="text"
-                        value={emailTemplate.subject}
-                        onChange={(e) => setEmailTemplate({...emailTemplate, subject: e.target.value})}
-                        placeholder="例: 【{'{company}'}】セミナーのご案内"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
+                {/* メール作成方法の選択 - 中央配置 */}
+                <div className="flex justify-center">
+                  <div className="space-y-6 max-w-4xl w-full">
+                    {/* 見出し */}
+                    <div className="text-center">
+                      <h3 className="text-2xl font-bold text-gray-800 mb-2">メール作成方法を選択</h3>
+                      <p className="text-gray-600">お好みの方法でメールテンプレートを作成できます</p>
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        本文
-                      </label>
-                      <textarea
-                        value={emailTemplate.body}
-                        onChange={(e) => setEmailTemplate({...emailTemplate, body: e.target.value})}
-                        placeholder={`例:
+                    {/* 2つの選択肢 */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* AI会話型 - 簡単作成 */}
+                      <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-6">
+                        <div className="text-center space-y-4">
+                          <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full">
+                            <MessageSquare className="h-8 w-8 text-green-600" />
+                          </div>
+                          <div>
+                            <h4 className="text-xl font-bold text-green-800">AI会話で簡単作成</h4>
+                            <p className="text-green-700 text-sm mt-2">
+                              初心者向け・手軽にメールを作りたい方におすすめ
+                            </p>
+                          </div>
+                          <ul className="text-sm text-green-700 space-y-1 text-left">
+                            <li>• AIとチャットで対話しながら作成</li>
+                            <li>• 目的を伝えるだけで自動生成</li>
+                            <li>• 変数の使い方もAIがサポート</li>
+                            <li>• 生成された文章は簡単コピー</li>
+                          </ul>
+                          <button
+                            onClick={startAIChat}
+                            className="w-full flex items-center justify-center px-6 py-3 text-lg bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-lg"
+                          >
+                            <MessageSquare className="h-5 w-5 mr-2" />
+                            AIと会話でメール作成
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 手動テンプレート - 本格作成 */}
+                      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-6">
+                        <div className="text-center space-y-4">
+                          <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full">
+                            <Edit3 className="h-8 w-8 text-blue-600" />
+                          </div>
+                          <div>
+                            <h4 className="text-xl font-bold text-blue-800">手動で本格作成</h4>
+                            <p className="text-blue-700 text-sm mt-2">
+                              上級者向け・細かくカスタマイズしたい方におすすめ
+                            </p>
+                          </div>
+                          <ul className="text-sm text-blue-700 space-y-1 text-left">
+                            <li>• 件名・本文を直接入力して作成</li>
+                            <li>• 変数を自由に組み合わせ可能</li>
+                            <li>• リアルタイムプレビューで確認</li>
+                            <li>• 細かな表現まで完全制御</li>
+                            <li>• 外部ChatGPT/Claude用プロンプト生成</li>
+                          </ul>
+                          
+                          {/* プロンプトコピーボタン */}
+                          <div className="pt-2">
+                            <button
+                              onClick={() => {
+                                
+                                const aiPrompt = `以下の条件でビジネスメールの件名と本文を作成してください：
+
+【メール作成依頼】
+- 目的: [ここに目的を記載してください（例：セミナーの案内、新商品の紹介、定期連絡など）]
+- 対象: ビジネス関係者
+
+【利用可能な変数と説明】
+- {name} → 宛先の氏名（例：田中太郎）
+- {email} → 宛先のメールアドレス（例：tanaka@company.com）
+- {company} → 宛先の会社名（例：株式会社サンプル）
+- {department} → 宛先の部署名（例：営業部）
+- {position} → 宛先の役職名（例：営業マネージャー）
+
+【変数の使用方法】
+- 文中で {変数名} の形で記載してください
+- 使用例: 「{name}様」「{company}の{department}」「{position}としてご活躍の{name}様」
+- 個人に合わせた内容にするため、可能な限り変数を活用してください
+
+【出力形式】
+件名: [ここに件名]
+
+本文:
+[ここに本文]
+
+【追加要件】
+- 丁寧で適切なビジネス文書として作成
+- 変数を効果的に活用して個別化された内容にする
+- 簡潔で分かりやすい内容
+- 署名部分は含めない（システムで自動追加されます）
+- 日本のビジネスマナーに適した敬語を使用`;
+
+                                navigator.clipboard.writeText(aiPrompt).then(() => {
+                                  alert('📋 外部AI用プロンプトをコピーしました！\nChatGPTやClaudeに貼り付けてメール文を作成し、結果を下のフォームに貼り付けてください。');
+                                }).catch(() => {
+                                  alert('❌ コピーに失敗しました。手動でコピーしてください。');
+                                });
+                              }}
+                              className="flex items-center justify-center w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm text-sm"
+                            >
+                              <Zap className="h-4 w-4 mr-1" />
+                              外部AI用プロンプトをコピー
+                            </button>
+                          </div>
+                          
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
+                {/* テンプレート作成・プレビュー - 下部左右分割 */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+                  {/* テンプレート作成 - 左側 */}
+                  <div className="space-y-6">
+                    <div className="flex items-center">
+                      <Edit3 className="h-5 w-5 text-blue-600 mr-2" />
+                      <h3 className="text-xl font-semibold text-gray-800">テンプレート作成</h3>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          件名
+                        </label>
+                        <input
+                          type="text"
+                          value={emailTemplate.subject}
+                          onChange={(e) => setEmailTemplate({...emailTemplate, subject: e.target.value})}
+                          placeholder="例: 【{'{company}'}】セミナーのご案内"
+                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-base"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          本文
+                        </label>
+                        <textarea
+                          value={emailTemplate.body}
+                          onChange={(e) => setEmailTemplate({...emailTemplate, body: e.target.value})}
+                          placeholder={`例:
 {'{name}'}様
 
 いつもお世話になっております。
-{'{sender}'}です。
 
 来月のセミナーについてご案内いたします...`}
-                        rows={12}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
+                          rows={16}
+                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-base resize-none"
+                        />
+                      </div>
                     </div>
 
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <h4 className="text-sm font-medium text-gray-700 mb-2">利用可能な変数:</h4>
-                      <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
-                        <div>• {'{name}'} - 氏名</div>
-                        <div>• {'{email}'} - メールアドレス</div>
-                        <div>• {'{company}'} - 会社名</div>
-                        <div>• {'{department}'} - 部署</div>
-                        <div>• {'{position}'} - 役職</div>
+                    {/* 利用可能な変数 - 改善版 */}
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-5">
+                      <h4 className="text-base font-semibold text-blue-800 mb-4 flex items-center">
+                        <FileText className="h-4 w-4 mr-2" />
+                        利用可能な変数
+                      </h4>
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="flex items-center bg-white px-3 py-2 rounded-lg shadow-sm">
+                          <code className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-mono text-sm mr-3">{'{name}'}</code>
+                          <span className="text-gray-700 text-sm">氏名</span>
+                        </div>
+                        <div className="flex items-center bg-white px-3 py-2 rounded-lg shadow-sm">
+                          <code className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-mono text-sm mr-3">{'{email}'}</code>
+                          <span className="text-gray-700 text-sm">メールアドレス</span>
+                        </div>
+                        <div className="flex items-center bg-white px-3 py-2 rounded-lg shadow-sm">
+                          <code className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-mono text-sm mr-3">{'{company}'}</code>
+                          <span className="text-gray-700 text-sm">会社名</span>
+                        </div>
+                        <div className="flex items-center bg-white px-3 py-2 rounded-lg shadow-sm">
+                          <code className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-mono text-sm mr-3">{'{department}'}</code>
+                          <span className="text-gray-700 text-sm">部署名</span>
+                        </div>
+                        <div className="flex items-center bg-white px-3 py-2 rounded-lg shadow-sm">
+                          <code className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-mono text-sm mr-3">{'{position}'}</code>
+                          <span className="text-gray-700 text-sm">役職名</span>
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* プレビュー */}
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-medium text-gray-700">プレビュー</h3>
+                  {/* プレビュー - 右側 */}
+                  <div className="space-y-6">
+                    <div className="flex items-center">
+                      <Eye className="h-5 w-5 text-green-600 mr-2" />
+                      <h3 className="text-xl font-semibold text-gray-800">プレビュー</h3>
+                    </div>
                     
-                    <div className="border border-gray-300 rounded-lg overflow-hidden">
-                      <div className="bg-gray-50 px-4 py-2 border-b border-gray-300">
-                        <div className="text-sm text-gray-600">件名:</div>
-                        <div className="font-medium">
+                    <div className="border-2 border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                      <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-5 py-4 border-b border-gray-200">
+                        <div className="text-sm font-medium text-gray-600 mb-2">件名:</div>
+                        <div className="font-semibold text-gray-800 text-base">
                           {emailTemplate.subject ? previewTemplate(emailTemplate.subject) : '件名を入力してください'}
                         </div>
                       </div>
-                      <div className="p-4">
-                        <div className="text-sm text-gray-600 mb-2">本文:</div>
-                        <div className="whitespace-pre-wrap text-sm">
+                      <div className="p-5 bg-white min-h-[400px]">
+                        <div className="text-sm font-medium text-gray-600 mb-3">本文:</div>
+                        <div className="whitespace-pre-wrap text-base leading-relaxed text-gray-700">
                           {emailTemplate.body ? previewTemplate(emailTemplate.body) : '本文を入力してください'}
                         </div>
                       </div>
                     </div>
 
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                      <div className="flex items-center">
-                        <div className="text-yellow-600 mr-3">
+                    <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5">
+                      <div className="flex items-start">
+                        <div className="text-amber-600 mr-3 mt-1">
                           <Eye className="h-5 w-5" />
                         </div>
                         <div>
-                          <p className="text-yellow-800 font-medium">プレビュー説明</p>
-                          <p className="text-yellow-700 text-sm">
-                            実際の送信時は各宛先の情報で変数が置換されます
+                          <p className="text-amber-800 font-semibold mb-2">プレビュー説明</p>
+                          <p className="text-amber-700 text-sm leading-relaxed">
+                            実際の送信時は各宛先の情報で変数が置換されます。<br />
+                            サンプルデータで表示されているため、実際の内容とは異なります。
                           </p>
                         </div>
                       </div>
@@ -608,12 +851,14 @@ export default function Home() {
                   </div>
                 )}
 
-                <div className="flex justify-between">
+                {/* ボタンエリア - 改善版 */}
+                <div className="flex justify-between items-center mt-8 pt-6 border-t border-gray-200">
                   <button
                     onClick={() => setCurrentStep('upload')}
-                    className="px-6 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                    className="flex items-center px-6 py-3 bg-gray-500 text-white rounded-xl hover:bg-gray-600 transition-all duration-200 shadow-md hover:shadow-lg"
                   >
-                    ← 戻る
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    戻る
                   </button>
                   <button
                     onClick={() => {
@@ -637,11 +882,115 @@ export default function Home() {
                       setCurrentStep('preview');
                     }}
                     disabled={!emailTemplate.subject || !emailTemplate.body}
-                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                    className="flex items-center px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg disabled:shadow-none"
                   >
-                    プレビューを確認 →
+                    プレビューを確認
+                    <Eye className="h-4 w-4 ml-2" />
                   </button>
                 </div>
+
+                {/* AI Chat Modal */}
+                {showAIChat && (
+                  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl h-[600px] flex flex-col">
+                      {/* Chat Header */}
+                      <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                        <div className="flex items-center">
+                          <MessageSquare className="h-6 w-6 text-green-600 mr-2" />
+                          <h3 className="text-xl font-semibold text-gray-800">AIメール作成アシスタント</h3>
+                        </div>
+                        <button
+                          onClick={() => setShowAIChat(false)}
+                          className="text-gray-500 hover:text-gray-700 transition-colors"
+                        >
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      {/* Chat Messages */}
+                      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {chatMessages.map((message, index) => (
+                          <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[80%] rounded-lg p-3 relative group ${
+                              message.role === 'user' 
+                                ? 'bg-blue-600 text-white' 
+                                : 'bg-gray-100 text-gray-800'
+                            }`}>
+                              <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                                {message.content}
+                              </div>
+                              {message.role === 'assistant' && (
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(message.content).then(() => {
+                                      // 一時的な成功表示（簡易版）
+                                      const button = document.activeElement as HTMLButtonElement;
+                                      const originalText = button.title;
+                                      button.title = 'コピーしました！';
+                                      setTimeout(() => {
+                                        button.title = originalText;
+                                      }, 2000);
+                                    }).catch(() => {
+                                      alert('コピーに失敗しました');
+                                    });
+                                  }}
+                                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-white shadow-sm hover:bg-gray-50"
+                                  title="メッセージをコピー"
+                                >
+                                  <Copy className="h-3 w-3 text-gray-600" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {isAILoading && (
+                          <div className="flex justify-start">
+                            <div className="bg-gray-100 rounded-lg p-3">
+                              <div className="flex items-center space-x-2">
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div>
+                                <span className="text-sm text-gray-600">AIが考えています...</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Chat Input */}
+                      <div className="p-4 border-t border-gray-200">
+                        <div className="space-y-2">
+                          <div className="flex space-x-2">
+                            <textarea
+                              value={currentMessage}
+                              onChange={(e) => setCurrentMessage(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isAILoading) {
+                                  e.preventDefault();
+                                  sendChatMessage();
+                                }
+                              }}
+                              placeholder="メールの目的や内容について教えてください...&#10;（Ctrl + Enter または Cmd + Enter で送信）"
+                              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                              disabled={isAILoading}
+                              rows={3}
+                            />
+                            <button
+                              onClick={sendChatMessage}
+                              disabled={!currentMessage.trim() || isAILoading}
+                              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors self-end"
+                            >
+                              <Send className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <div className="text-xs text-gray-500 text-center">
+                            Ctrl + Enter (Cmd + Enter): 送信 | Enter: 改行
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
